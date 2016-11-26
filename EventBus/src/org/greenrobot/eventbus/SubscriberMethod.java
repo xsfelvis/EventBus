@@ -16,15 +16,23 @@
 package org.greenrobot.eventbus;
 
 import java.lang.reflect.Method;
+/**
+ * 保存需要反射invoke方法时各种参数，如优先级、是否接受黏性事件、所在线程等信息
+ * 而生成这些封装好的方法需要SubscriberMethodFinder
+ */
 
-/** Used internally by EventBus and generated subscriber indexes. */
+/**
+ * Used internally by EventBus and generated subscriber indexes.
+ */
 public class SubscriberMethod {
     final Method method;
     final ThreadMode threadMode;
     final Class<?> eventType;
     final int priority;
     final boolean sticky;
-    /** Used for efficient comparison */
+    /**
+     * Used for efficient comparison
+     */
     String methodString;
 
     public SubscriberMethod(Method method, Class<?> eventType, ThreadMode threadMode, int priority, boolean sticky) {
@@ -41,7 +49,7 @@ public class SubscriberMethod {
             return true;
         } else if (other instanceof SubscriberMethod) {
             checkMethodString();
-            SubscriberMethod otherSubscriberMethod = (SubscriberMethod)other;
+            SubscriberMethod otherSubscriberMethod = (SubscriberMethod) other;
             otherSubscriberMethod.checkMethodString();
             // Don't use method.equals because of http://code.google.com/p/android/issues/detail?id=7811#c6
             return methodString.equals(otherSubscriberMethod.methodString);

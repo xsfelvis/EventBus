@@ -42,14 +42,20 @@ public class EventBus {
 
     /** Log tag, apps may override it. */
     public static String TAG = "EventBus";
-
+    //使用volatile的单例模式
     static volatile EventBus defaultInstance;
 
     private static final EventBusBuilder DEFAULT_BUILDER = new EventBusBuilder();
     private static final Map<Class<?>, List<Class<?>>> eventTypesCache = new HashMap<>();
-
+    //以事件类为Key，订阅者的回调方法为value的映射关系表
+    //即EventBus在收到一个事件时，就可以根据这个事件的类型，在该map中找到该事件的订阅者及处理事件的回调方法
     private final Map<Class<?>, CopyOnWriteArrayList<Subscription>> subscriptionsByEventType;
+    //每个订阅者所监听的事件类型表，在取消注册时可以通过该表中保存的信息，快速删除subscriptionsByEventType
+    //中订阅者的信息，避免遍历查找
     private final Map<Object, List<Class<?>>> typesBySubscriber;
+    //注册事件、发送事件、注销都是围绕以上两个核心数据结构展开，其中Subscription可以理解为每个订阅者与
+    // 回调方法(SubscriptionMethod)关系，在其他模块发送事件时，就会通过这个关系，让订阅者执行回调方法
+
     private final Map<Class<?>, Object> stickyEvents;
 
     private final ThreadLocal<PostingThreadState> currentPostingThreadState = new ThreadLocal<PostingThreadState>() {
@@ -108,9 +114,11 @@ public class EventBus {
         subscriptionsByEventType = new HashMap<>();
         typesBySubscriber = new HashMap<>();
         stickyEvents = new ConcurrentHashMap<>();
+        //=====不同线程模式的处理=========
         mainThreadPoster = new HandlerPoster(this, Looper.getMainLooper(), 10);
         backgroundPoster = new BackgroundPoster(this);
         asyncPoster = new AsyncPoster(this);
+        //=============================
         indexCount = builder.subscriberInfoIndexes != null ? builder.subscriberInfoIndexes.size() : 0;
         subscriberMethodFinder = new SubscriberMethodFinder(builder.subscriberInfoIndexes,
                 builder.strictMethodVerification, builder.ignoreGeneratedIndex);
@@ -131,11 +139,17 @@ public class EventBus {
      * The {@link Subscribe} annotation also allows configuration like {@link
      * ThreadMode} and priority.
      */
+    /**
+     * 注册对象是Object
+     */
     public void register(Object subscriber) {
+        //获取class
         Class<?> subscriberClass = subscriber.getClass();
+        //根据class查找相应的回调方法(3.0版本优化的重点！加入了索引加速)
         List<SubscriberMethod> subscriberMethods = subscriberMethodFinder.findSubscriberMethods(subscriberClass);
         synchronized (this) {
             for (SubscriberMethod subscriberMethod : subscriberMethods) {
+                //处理订阅对象的方法 注册的（对象+每个方法）
                 subscribe(subscriber, subscriberMethod);
             }
         }
@@ -144,10 +158,14 @@ public class EventBus {
     // Must be called in synchronized block
     private void subscribe(Object subscriber, SubscriberMethod subscriberMethod) {
         Class<?> eventType = subscriberMethod.eventType;
+        //把每个回调方法和订阅者封装成Subscription(订阅对象)
         Subscription newSubscription = new Subscription(subscriber, subscriberMethod);
+
+        //此处写法有点意思，明明想添加却先get然后通过空值判断再进行实际操作，更加安全
         CopyOnWriteArrayList<Subscription> subscriptions = subscriptionsByEventType.get(eventType);
         if (subscriptions == null) {
             subscriptions = new CopyOnWriteArrayList<>();
+            //加入到Map中统一管理
             subscriptionsByEventType.put(eventType, subscriptions);
         } else {
             if (subscriptions.contains(newSubscription)) {
@@ -157,13 +175,14 @@ public class EventBus {
         }
 
         int size = subscriptions.size();
+        //根据优先级(priority)/同级(i==size) (此处效率还是很低的)
         for (int i = 0; i <= size; i++) {
             if (i == size || subscriberMethod.priority > subscriptions.get(i).subscriberMethod.priority) {
                 subscriptions.add(i, newSubscription);
                 break;
             }
         }
-
+        //与上面一样对map的处理
         List<Class<?>> subscribedEvents = typesBySubscriber.get(subscriber);
         if (subscribedEvents == null) {
             subscribedEvents = new ArrayList<>();
@@ -236,18 +255,24 @@ public class EventBus {
 
     /** Posts the given event to the event bus. */
     public void post(Object event) {
+        //获得到当前线程的信息
         PostingThreadState postingState = currentPostingThreadState.get();
+        //获取到当前事件的eventQueue
         List<Object> eventQueue = postingState.eventQueue;
         eventQueue.add(event);
 
         if (!postingState.isPosting) {
+            //当前状态没有正在被post，则为安全
+            //检查当前状态是否是主线程
             postingState.isMainThread = Looper.getMainLooper() == Looper.myLooper();
+            //重置posting状态为正在post状态
             postingState.isPosting = true;
             if (postingState.canceled) {
                 throw new EventBusException("Internal error. Abort state was not reset");
             }
             try {
                 while (!eventQueue.isEmpty()) {
+                    //当前事件队列不为空
                     postSingleEvent(eventQueue.remove(0), postingState);
                 }
             } finally {
@@ -359,10 +384,17 @@ public class EventBus {
         return false;
     }
 
+    /**
+     *
+     * @param event
+     * @param postingState
+     * @throws Error
+     */
     private void postSingleEvent(Object event, PostingThreadState postingState) throws Error {
         Class<?> eventClass = event.getClass();
         boolean subscriptionFound = false;
         if (eventInheritance) {
+            //获得事件所有父类并遍历
             List<Class<?>> eventTypes = lookupAllEventTypes(eventClass);
             int countTypes = eventTypes.size();
             for (int h = 0; h < countTypes; h++) {
@@ -409,7 +441,7 @@ public class EventBus {
         }
         return false;
     }
-
+    //根据不同的poster，在对应的线程中通过反射
     private void postToSubscription(Subscription subscription, Object event, boolean isMainThread) {
         switch (subscription.subscriberMethod.threadMode) {
             case POSTING:
@@ -517,6 +549,7 @@ public class EventBus {
     }
 
     /** For ThreadLocal, much faster to set (and get multiple values). */
+    //post的线程的状态
     final static class PostingThreadState {
         final List<Object> eventQueue = new ArrayList<Object>();
         boolean isPosting;

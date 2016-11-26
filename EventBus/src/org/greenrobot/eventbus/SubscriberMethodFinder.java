@@ -32,6 +32,13 @@ class SubscriberMethodFinder {
      * EventBus must ignore both. There modifiers are not public but defined in the Java class file format:
      * http://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html#jvms-4.6-200-A.1
      */
+    /**
+     * 主要用来为SubscriberMethod封装方法
+     * 这里使用到了索引加速器！！！
+     * 在register时得到订阅者的所有回调方法，并封装返回给EventBus。
+     * 而加速索引模块是为了提高SubscriberMethodFinder的效率
+     */
+
     private static final int BRIDGE = 0x40;
     private static final int SYNTHETIC = 0x1000;
 
@@ -55,43 +62,68 @@ class SubscriberMethodFinder {
     List<SubscriberMethod> findSubscriberMethods(Class<?> subscriberClass) {
         List<SubscriberMethod> subscriberMethods = METHOD_CACHE.get(subscriberClass);
         if (subscriberMethods != null) {
-            return subscriberMethods;
+            return subscriberMethods;//方法缓存
         }
-
-        if (ignoreGeneratedIndex) {
+        //================查找核心================
+        if (ignoreGeneratedIndex) { //是否忽略设置的索引
+            //使用最原始的注解+反射
             subscriberMethods = findUsingReflection(subscriberClass);
         } else {
+            //去索引中查找订阅者的方法
             subscriberMethods = findUsingInfo(subscriberClass);
         }
+        //========================================
+
+        //查找方法 如果找到则存到方法缓存中，否则直接抛出异常
         if (subscriberMethods.isEmpty()) {
             throw new EventBusException("Subscriber " + subscriberClass
                     + " and its super classes have no public methods with the @Subscribe annotation");
         } else {
+            //把找到的方法保存到METHOD_CACHE中
             METHOD_CACHE.put(subscriberClass, subscriberMethods);
             return subscriberMethods;
         }
     }
 
+    /**
+     * 在索引中查找订阅者的回调方法
+     * 索引实际是一个以
+     * 注册类为Key，SimpleSubscribeInfo(封装了注解标识的方法信息包括方法名、方法类型等信息)
+     * @param subscriberClass
+     * @return
+     */
     private List<SubscriberMethod> findUsingInfo(Class<?> subscriberClass) {
-        FindState findState = prepareFindState();
-        findState.initForSubscriber(subscriberClass);
-        while (findState.clazz != null) {
-            findState.subscriberInfo = getSubscriberInfo(findState);
-            if (findState.subscriberInfo != null) {
+        //寻找方法时所需要的临时变量都被封装到了FindState这个静态内部类中
+        FindState findState = prepareFindState();//到对象池去取得上下文，避免频繁创造对象，这个设计很棒！
+        findState.initForSubscriber(subscriberClass);//初始化寻找方法的上下文
+
+        while (findState.clazz != null) { //子类找完了，会继续去父类中寻找
+            //===========================索引查找核心================================
+            findState.subscriberInfo = getSubscriberInfo(findState);//获得订阅者类的信息
+            //=======================================================================
+            if (findState.subscriberInfo != null) {//上一步能拿到相关信息的话，就开始把方法数组封装成List
                 SubscriberMethod[] array = findState.subscriberInfo.getSubscriberMethods();
                 for (SubscriberMethod subscriberMethod : array) {
                     if (findState.checkAdd(subscriberMethod.method, subscriberMethod.eventType)) {
+                        //checkAdd是为了避免在父类中找到的方法是被子类重写的，此时应保证回调时执行子类的方法
                         findState.subscriberMethods.add(subscriberMethod);
                     }
                 }
             } else {
+                //索引中找不到，降级成运行时通过注解和反射
                 findUsingReflectionInSingleClass(findState);
             }
-            findState.moveToSuperclass();
+            findState.moveToSuperclass();//上下文切换为父类,可见EventBus支持继承回调
         }
-        return getMethodsAndRelease(findState);
+
+        return getMethodsAndRelease(findState);//寻找完成之后，释放FindState进对象池并返回找到的回调方法
     }
 
+    /**
+     * 查找完成后释放FindState进对象池并返回找到的回调方法
+     * @param findState
+     * @return
+     */
     private List<SubscriberMethod> getMethodsAndRelease(FindState findState) {
         List<SubscriberMethod> subscriberMethods = new ArrayList<>(findState.subscriberMethods);
         findState.recycle();
@@ -119,16 +151,25 @@ class SubscriberMethodFinder {
         return new FindState();
     }
 
+    /**
+     * 通过索引查找回调的核心函数
+     * @param findState
+     * @return
+     */
     private SubscriberInfo getSubscriberInfo(FindState findState) {
         if (findState.subscriberInfo != null && findState.subscriberInfo.getSuperSubscriberInfo() != null) {
+            //findState.subscriberInfo已有实例，证明本次查找需要查找上次找到过的类的父类
             SubscriberInfo superclassInfo = findState.subscriberInfo.getSuperSubscriberInfo();
             if (findState.clazz == superclassInfo.getSubscriberClass()) {
+                //确定是所需查找的类
                 return superclassInfo;
             }
         }
-        if (subscriberInfoIndexes != null) {
+        if (subscriberInfoIndexes != null) {//从我们传入的subscriberInfoIndexes中获取相应的订阅者信息
             for (SubscriberInfoIndex index : subscriberInfoIndexes) {
+                //==========getSubscriberInfo是我们使用APT生成的代码里面的索引加速======
                 SubscriberInfo info = index.getSubscriberInfo(findState.clazz);
+                //==================================================================
                 if (info != null) {
                     return info;
                 }
@@ -147,6 +188,9 @@ class SubscriberMethodFinder {
         return getMethodsAndRelease(findState);
     }
 
+    /**
+     * 降级成注解和反射模式去处理
+     */
     private void findUsingReflectionInSingleClass(FindState findState) {
         Method[] methods;
         try {
@@ -164,7 +208,7 @@ class SubscriberMethodFinder {
                 if (parameterTypes.length == 1) {
                     Subscribe subscribeAnnotation = method.getAnnotation(Subscribe.class);
                     if (subscribeAnnotation != null) {
-                        Class<?> eventType = parameterTypes[0];
+                        Class<?> eventType = parameterTypes[0];//从这里可以看出eventType只有一个参数
                         if (findState.checkAdd(method, eventType)) {
                             ThreadMode threadMode = subscribeAnnotation.threadMode();
                             findState.subscriberMethods.add(new SubscriberMethod(method, eventType, threadMode,
@@ -188,6 +232,9 @@ class SubscriberMethodFinder {
         METHOD_CACHE.clear();
     }
 
+    /**
+     * 寻找方法时所需要的临时变量都被封装到了FindState这个静态内部类中
+     */
     static class FindState {
         final List<SubscriberMethod> subscriberMethods = new ArrayList<>();
         final Map<Class, Object> anyMethodByEventType = new HashMap<>();

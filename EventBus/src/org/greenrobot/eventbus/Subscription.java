@@ -15,6 +15,10 @@
  */
 package org.greenrobot.eventbus;
 
+/**
+ * 负责将订阅者和回调方法封装成Subscription(订阅对象)
+ */
+
 final class Subscription {
     final Object subscriber;
     final SubscriberMethod subscriberMethod;
@@ -22,7 +26,7 @@ final class Subscription {
      * Becomes false as soon as {@link EventBus#unregister(Object)} is called, which is checked by queued event delivery
      * {@link EventBus#invokeSubscriber(PendingPost)} to prevent race conditions.
      */
-    volatile boolean active;
+    volatile boolean active; //原子性操作
 
     Subscription(Object subscriber, SubscriberMethod subscriberMethod) {
         this.subscriber = subscriber;

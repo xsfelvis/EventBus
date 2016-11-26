@@ -70,7 +70,7 @@ public class EventBusAnnotationProcessor extends AbstractProcessor {
         Messager messager = processingEnv.getMessager();
         try {
             String index = processingEnv.getOptions().get(OPTION_EVENT_BUS_INDEX);
-            if (index == null) {
+            if (index == null) { //如果没有在gradle中配置apt的argument，编译就会报错
                 messager.printMessage(Diagnostic.Kind.ERROR, "No option " + OPTION_EVENT_BUS_INDEX +
                         " passed to annotation processor");
                 return false;
@@ -99,11 +99,11 @@ public class EventBusAnnotationProcessor extends AbstractProcessor {
                 messager.printMessage(Diagnostic.Kind.ERROR,
                         "Unexpected processing state: annotations still available after writing.");
             }
-            collectSubscribers(annotations, env, messager);
-            checkForSubscribersToSkip(messager, indexPackage);
+            collectSubscribers(annotations, env, messager);//根据注解拿到所有订阅者的回调方法信息
+            checkForSubscribersToSkip(messager, indexPackage);//筛选掉不符合规则的订阅者
 
             if (!methodsByClass.isEmpty()) {
-                createInfoIndexFile(index);
+                createInfoIndexFile(index);//生成索引类
             } else {
                 messager.printMessage(Diagnostic.Kind.WARNING, "No @Subscribe annotations found");
             }
@@ -116,6 +116,7 @@ public class EventBusAnnotationProcessor extends AbstractProcessor {
         return true;
     }
 
+    // 遍历annotations，找出所有被注解标识的方法，以初始化methodsByClass
     private void collectSubscribers(Set<? extends TypeElement> annotations, RoundEnvironment env, Messager messager) {
         for (TypeElement annotation : annotations) {
             Set<? extends Element> elements = env.getElementsAnnotatedWith(annotation);
@@ -132,7 +133,7 @@ public class EventBusAnnotationProcessor extends AbstractProcessor {
             }
         }
     }
-
+    // 过滤掉static，非public和参数大于1的方法
     private boolean checkHasNoErrors(ExecutableElement element, Messager messager) {
         if (element.getModifiers().contains(Modifier.STATIC)) {
             messager.printMessage(Diagnostic.Kind.ERROR, "Subscriber method must not be static", element);
@@ -155,6 +156,7 @@ public class EventBusAnnotationProcessor extends AbstractProcessor {
     /**
      * Subscriber classes should be skipped if their class or any involved event class are not visible to the index.
      */
+    // 检查methodsByClass中的各个类，是否存在非public的父类和方法参数
     private void checkForSubscribersToSkip(Messager messager, String myPackage) {
         for (TypeElement skipCandidate : methodsByClass.keySet()) {
             TypeElement subscriberClass = skipCandidate;
